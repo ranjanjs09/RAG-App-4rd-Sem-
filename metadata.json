@@ -1,0 +1,6 @@
+{
+  "name": "VeriFaith RAG System",
+  "description": "A Retrieval-Augmented Generation system with built-in faithfulness verification and citation alignment.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

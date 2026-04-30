@@ -1,0 +1,152 @@
+import { GoogleGenAI } from "@google/genai";
+
+// Initialize Gemini lazily to ensure API key is available
+let genAI: GoogleGenAI | null = null;
+
+function getAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not defined in the environment.");
+    }
+    genAI = new GoogleGenAI({ apiKey });
+  }
+  return genAI;
+}
+
+export interface Document {
+  id: string;
+  title: string;
+  content: string;
+  embedding?: number[];
+  score?: number;
+}
+
+export interface RAGResponse {
+  answer: string;
+  documents: { id: string; title: string; content: string; score: number }[];
+  faithfulnessScore: number;
+  citations: { text: string; docId: string }[];
+  evaluation: {
+    exactMatch: boolean;
+    f1: number;
+  };
+}
+
+// Helper: Vector Similarity
+function cosineSimilarity(vec1: number[], vec2: number[]) {
+  if (!vec1 || !vec2) return 0;
+  const dotProduct = vec1.reduce((sum, val, i) => sum + val * (vec2[i] || 0), 0);
+  const mag1 = Math.sqrt(vec1.reduce((sum, val) => sum + val * val, 0));
+  const mag2 = Math.sqrt(vec2.reduce((sum, val) => sum + val * val, 0));
+  if (mag1 === 0 || mag2 === 0) return 0;
+  return dotProduct / (mag1 * mag2);
+}
+
+// Helper: Calculate F1 Score
+function calculateF1(prediction: string, context: string) {
+  const normalize = (text: string) => text.toLowerCase().replace(/[^\w\s]/g, "").split(/\s+/).filter(Boolean);
+  const predTokens = normalize(prediction);
+  const contextTokens = normalize(context);
+  
+  if (predTokens.length === 0 || contextTokens.length === 0) return 0;
+  
+  const common = predTokens.filter(t => contextTokens.includes(t));
+  if (common.length === 0) return 0;
+  
+  const precision = common.length / predTokens.length;
+  const recall = common.length / contextTokens.length;
+  
+  return (2 * precision * recall) / (precision + recall);
+}
+
+export async function processRAGQuery(
+  query: string, 
+  dataset: Document[], 
+  k: number = 3, 
+  modelName: string = "gemini-3-flash-preview"
+): Promise<RAGResponse> {
+  const ai = getAI();
+
+  // 1. Retrieval
+  // Ensure we have embeddings for the dataset
+  for (const doc of dataset) {
+    if (!doc.embedding) {
+      try {
+        const resp = await ai.models.embedContent({
+          model: "gemini-embedding-2-preview",
+          contents: [{ parts: [{ text: doc.content }] }]
+        });
+        doc.embedding = resp.embeddings[0].values;
+      } catch (e) {
+        console.error(`Failed to embed doc ${doc.id}:`, e);
+      }
+    }
+  }
+
+  const queryEmbeddingResponse = await ai.models.embedContent({
+    model: "gemini-embedding-2-preview",
+    contents: [{ parts: [{ text: query }] }]
+  });
+  const queryEmbedding = queryEmbeddingResponse.embeddings[0].values;
+
+  const scoredDocs = dataset
+    .map(doc => ({
+      ...doc,
+      score: doc.embedding ? cosineSimilarity(queryEmbedding, doc.embedding) : 0
+    }))
+    .sort((a, b) => (b.score || 0) - (a.score || 0))
+    .slice(0, Math.min(k, dataset.length));
+
+  const contextText = scoredDocs.map(d => `[Source: ${d.id}] ${d.content}`).join("\n\n");
+
+  // 2. Generation
+  const generationResponse = await ai.models.generateContent({
+    model: modelName,
+    contents: `Context:\n${contextText}\n\nQuery: ${query}`,
+    config: {
+      systemInstruction: `You are a faithful assistant. Answer the user query strictly using the provided context. 
+      If the answer is not in the context, say you don't know and do not use your external knowledge.
+      Provide citations in the format [docId] after each claim. Keep the answer concise.`,
+    }
+  });
+
+  const answer = generationResponse.text || "No response generated.";
+
+  // 3. Faithfulness Verification
+  const verificationResponse = await ai.models.generateContent({
+    model: "gemini-3.1-pro-preview",
+    contents: `Context:\n${contextText}\n\nAnswer: ${answer}`,
+    config: {
+      systemInstruction: `Analyze the faithfulness of the answer based on the provided context.
+      An answer is faithful if every claim made in it is directly supported by the context.
+      Calculate a faithfulness score from 0.0 to 1.0. 0.0 means completely hallucinated, 1.0 means perfectly grounded.
+      Identify specific spans in the answer and link them to document IDs.
+      Return ONLY JSON: { "score": 0.95, "alignment": [{ "text": "...", "docId": "..." }] }`,
+      responseMimeType: "application/json"
+    }
+  });
+
+  let verificationData;
+  try {
+    const text = verificationResponse.text;
+    verificationData = text ? JSON.parse(text) : { score: 0, alignment: [] };
+  } catch (e) {
+    verificationData = { score: 0, alignment: [] };
+  }
+
+  // 4. Real Evaluation
+  const f1 = calculateF1(answer, contextText);
+  const exactMatch = answer.toLowerCase().trim() === contextText.toLowerCase().trim();
+
+  return {
+    answer,
+    documents: scoredDocs.map(({ id, title, content, score }) => ({ id, title, content, score: score || 0 })),
+    faithfulnessScore: verificationData.score,
+    citations: verificationData.alignment || [],
+    evaluation: {
+      exactMatch,
+      f1
+    }
+  };
+}
