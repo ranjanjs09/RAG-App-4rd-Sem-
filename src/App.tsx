@@ -15,9 +15,13 @@ export default function App() {
     const unsubscribe = onAuthStateChanged(auth, async (u) => {
       if (!u) {
         try {
+          // If anonymous auth is disabled in the console, this will throw auth/admin-restricted-operation
           await loginAnonymously();
-        } catch (err) {
-          console.error("Authentication unavailable. Using Guest Mode.", err);
+        } catch (err: any) {
+          if (err?.code !== 'auth/admin-restricted-operation') {
+            console.error("Authentication check failed", err);
+          }
+          // We set loading to false even on error to allow "Guest Mode"
           setAuthLoading(false);
         }
       } else {
