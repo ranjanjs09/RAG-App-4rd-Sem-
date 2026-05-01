@@ -6,7 +6,7 @@
 import React, { useState, useEffect } from "react";
 import { Search, Loader2, BookOpen, CheckCircle2, AlertCircle, FileText, ChevronRight, Quote, Info, Settings, Database, Activity, Plus, Terminal, LogIn, LogOut, Image, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { processRAGQuery, RAGResponse, Document, saveKnowledge, processImageKnowledge } from "./lib/rag";
+import { processRAGQuery, RAGResponse, Document, saveKnowledge, processImageKnowledge, fetchPublicKnowledge } from "./lib/rag";
 import { auth, loginWithGoogle, logout, db } from "./lib/firebase";
 import { onAuthStateChanged, User } from "firebase/auth";
 import { collection, query as firestoreQuery, where, onSnapshot, orderBy } from "firebase/firestore";
@@ -23,6 +23,7 @@ export default function App() {
   const [authLoading, setAuthLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
+  const [includePublicSearch, setIncludePublicSearch] = useState(false);
   const [result, setResult] = useState<RAGResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   
@@ -34,9 +35,10 @@ export default function App() {
   
   // Doc Management
   const [showDocModal, setShowDocModal] = useState(false);
-  const [newDoc, setNewDoc] = useState({ title: "", content: "" });
+  const [newDoc, setNewDoc] = useState({ title: "", content: "", isPublic: false });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
+  const [publicDocs, setPublicDocs] = useState<Document[]>([]);
 
   useEffect(() => {
     const unsubscribe = onAuthStateChanged(auth, (u) => {
@@ -44,6 +46,18 @@ export default function App() {
       setAuthLoading(false);
     });
     return () => unsubscribe();
+  }, []);
+
+  useEffect(() => {
+    const loadPublicDocs = async () => {
+      try {
+        const docs = await fetchPublicKnowledge(5);
+        setPublicDocs(docs);
+      } catch (err) {
+        console.error("Public docs load failed", err);
+      }
+    };
+    loadPublicDocs();
   }, []);
 
   useEffect(() => {
@@ -86,7 +100,7 @@ export default function App() {
     
     try {
       const logRetrievalId = addLog("Vector Space Scan: Initiating search...");
-      const data = await processRAGQuery(query, user.uid, k, model);
+      const data = await processRAGQuery(query, user.uid, includePublicSearch, k, model);
       updateLog(logRetrievalId, "success");
       
       addLog("Contextual Grounding: Infusing retrieval results...", "success");
@@ -110,18 +124,19 @@ export default function App() {
     
     try {
       if (imageFile) {
-        await processImageKnowledge(imageFile, user.uid);
+        await processImageKnowledge(imageFile, user.uid, newDoc.isPublic);
       } else {
         await saveKnowledge({
           title: newDoc.title,
           content: newDoc.content,
           type: "text",
-          userId: user.uid
+          userId: user.uid,
+          isPublic: newDoc.isPublic
         });
       }
       
       updateLog(logId, "success");
-      setNewDoc({ title: "", content: "" });
+      setNewDoc({ title: "", content: "", isPublic: false });
       setImageFile(null);
       setShowDocModal(false);
     } catch (err) {
@@ -153,11 +168,26 @@ export default function App() {
         </p>
         <button 
           onClick={() => loginWithGoogle()}
-          className="flex items-center gap-4 bg-white text-black px-8 py-4 rounded-2xl font-bold hover:bg-neutral-200 transition-all shadow-xl active:scale-95"
+          className="flex items-center gap-4 bg-white text-black px-8 py-4 rounded-2xl font-bold hover:bg-neutral-200 transition-all shadow-xl active:scale-95 mb-16"
         >
           <LogIn size={20} />
           <span>Access Command Interface</span>
         </button>
+
+        {publicDocs.length > 0 && (
+          <div className="w-full max-w-4xl">
+            <h2 className="text-[10px] font-mono font-bold text-neutral-600 uppercase tracking-[0.3em] mb-8 text-center">Recent Shared Research</h2>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {publicDocs.map(doc => (
+                <div key={doc.id} className="glass-panel p-6 rounded-2xl border border-white/5 bg-white/[0.01]">
+                   <span className="text-[9px] font-mono text-blue-500 bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20 mb-3 inline-block">SHARED</span>
+                   <h3 className="text-sm font-bold text-white mb-2 line-clamp-1">{doc.title}</h3>
+                   <p className="text-xs text-neutral-500 line-clamp-3 leading-relaxed">{doc.content}</p>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -310,6 +340,20 @@ export default function App() {
                   ) : "GENERATE"}
                 </button>
               </form>
+              <div className="flex items-center gap-4 mt-6 px-4">
+                <button 
+                  type="button"
+                  onClick={() => setIncludePublicSearch(!includePublicSearch)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-xl text-[10px] font-bold uppercase tracking-widest transition-all border ${
+                    includePublicSearch 
+                    ? "bg-purple-600/10 border-purple-500/50 text-purple-400 shadow-[0_0_15px_rgba(168,85,247,0.1)]" 
+                    : "bg-white/5 border-white/5 text-neutral-500 hover:border-white/10"
+                  }`}
+                >
+                  <Activity size={12} />
+                  Include Shared Hub Index
+                </button>
+              </div>
             </section>
 
             <AnimatePresence mode="wait">
@@ -416,7 +460,12 @@ export default function App() {
                             <ChevronRight size={16} className="text-blue-500" />
                           </div>
                           <div className="flex items-center justify-between mb-4">
-                             <span className="text-[10px] font-mono font-bold py-1 px-3 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 uppercase tracking-widest">{doc.id}</span>
+                             <div className="flex items-center gap-2">
+                               <span className="text-[10px] font-mono font-bold py-1 px-3 bg-blue-500/10 text-blue-400 rounded-lg border border-blue-500/20 uppercase tracking-widest">{doc.id}</span>
+                               {doc.isPublic && (
+                                 <span className="text-[9px] font-mono text-purple-400 bg-purple-500/10 px-2 py-0.5 rounded border border-purple-500/20">SHARED</span>
+                               )}
+                             </div>
                              <div className="flex items-center gap-1.5">
                                <Activity size={10} className="text-neutral-500" />
                                <span className="text-[10px] font-mono text-neutral-500">{doc.score.toFixed(3)}</span>
@@ -459,6 +508,37 @@ export default function App() {
             </AnimatePresence>
           </div>
         </div>
+
+        {/* Global Shared Knowledge Feed */}
+        <section className="mt-20">
+          <div className="flex items-center justify-between mb-8">
+            <div>
+               <h3 className="text-xl font-display font-bold text-white mb-1 tracking-tight">Global Research Hub</h3>
+               <p className="text-sm text-neutral-500 font-medium">Peer-verified neural fragments from the community</p>
+            </div>
+            <button className="text-xs font-mono font-bold text-blue-500 hover:text-blue-400 transition-colors uppercase tracking-widest bg-blue-500/5 px-4 py-2 rounded-lg border border-blue-500/10">View Global Matrix</button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+            {publicDocs.map((doc) => (
+              <div key={doc.id} className="glass-panel p-7 rounded-[2rem] border border-white/5 hover:border-blue-500/30 bg-white/[0.01] transition-all group">
+                <div className="flex items-center gap-2 mb-4">
+                  <div className="w-1.5 h-1.5 rounded-full bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                  <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest">{doc.type === "image" ? "VISUAL SCALPEL" : "TEXT CORE"}</span>
+                </div>
+                <h4 className="font-display font-bold text-white mb-3 line-clamp-1 group-hover:text-blue-400 transition-colors">{doc.title}</h4>
+                <p className="text-xs text-neutral-400 leading-relaxed line-clamp-4">
+                  {doc.content}
+                </p>
+              </div>
+            ))}
+            {publicDocs.length === 0 && (
+              <div className="col-span-full py-16 text-center border border-dashed border-white/10 rounded-[2rem]">
+                <p className="text-neutral-600 font-mono text-xs uppercase tracking-[0.2em]">Awaiting community contributions...</p>
+              </div>
+            )}
+          </div>
+        </section>
       </main>
 
       {/* Add Document Modal - Dark Themed */}
@@ -553,6 +633,20 @@ export default function App() {
                     </button>
                   </div>
                 )}
+
+                <div className="flex items-center justify-between p-4 bg-white/[0.03] rounded-2xl border border-white/5">
+                  <div>
+                    <h4 className="text-sm font-bold text-white">Public Sharing</h4>
+                    <p className="text-[10px] text-neutral-500 uppercase tracking-widest mt-0.5">Enable community retrieval</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setNewDoc(prev => ({ ...prev, isPublic: !prev.isPublic }))}
+                    className={`w-12 h-6 rounded-full p-1 transition-all ${newDoc.isPublic ? "bg-blue-600" : "bg-white/10"}`}
+                  >
+                    <div className={`w-4 h-4 bg-white rounded-full transition-all ${newDoc.isPublic ? "ml-6" : "ml-0"}`} />
+                  </button>
+                </div>
                 
                 <button 
                   type="submit"

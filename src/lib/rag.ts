@@ -22,6 +22,7 @@ export interface Document {
   content: string;
   embedding?: number[];
   userId?: string;
+  isPublic?: boolean;
   type?: "text" | "image";
   score?: number;
 }
@@ -75,17 +76,18 @@ export async function getEmbedding(text: string) {
 }
 
 // Database Helpers
-export async function saveKnowledge(data: { title: string; content: string; type: "text" | "image"; userId: string; metadata?: any }) {
+export async function saveKnowledge(data: { title: string; content: string; type: "text" | "image"; userId: string; isPublic?: boolean; metadata?: any }) {
   const embedding = await getEmbedding(data.content);
   const docRef = await addDoc(collection(db, "knowledge"), {
     ...data,
+    isPublic: data.isPublic || false,
     embedding,
     createdAt: serverTimestamp()
   });
   return docRef.id;
 }
 
-export async function processImageKnowledge(file: File, userId: string) {
+export async function processImageKnowledge(file: File, userId: string, isPublic: boolean = false) {
   const ai = getAI();
   
   const base64 = await new Promise<string>((resolve) => {
@@ -119,33 +121,59 @@ export async function processImageKnowledge(file: File, userId: string) {
     content,
     type: "image",
     userId,
+    isPublic,
     metadata: { fileName: file.name, fileSize: file.size }
   });
+}
+
+export async function fetchPublicKnowledge(limitCount: number = 10) {
+  const q = firestoreQuery(
+    collection(db, "knowledge"),
+    where("isPublic", "==", true),
+    orderBy("createdAt", "desc"),
+    limit(limitCount)
+  );
+  const snapshot = await getDocs(q);
+  return snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
 }
 
 export async function processRAGQuery(
   queryText: string, 
   userId: string,
+  includePublic: boolean = false,
   k: number = 3, 
   modelName: string = "gemini-3-flash-preview"
 ): Promise<RAGResponse> {
   const ai = getAI();
 
   // 1. Fetch relevant docs from Firestore
-  const q = firestoreQuery(collection(db, "knowledge"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(100));
-  const snapshot = await getDocs(q);
-  const dataset: Document[] = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+  let docs: Document[] = [];
+  
+  // User docs
+  const qUser = firestoreQuery(collection(db, "knowledge"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(100));
+  const snapUser = await getDocs(qUser);
+  docs = snapUser.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+
+  // Public docs (if requested)
+  if (includePublic) {
+    const qPublic = firestoreQuery(collection(db, "knowledge"), where("isPublic", "==", true), orderBy("createdAt", "desc"), limit(100));
+    const snapPublic = await getDocs(qPublic);
+    const publicDocs = snapPublic.docs
+      .map(d => ({ id: d.id, ...d.data() } as Document))
+      .filter(pd => pd.userId !== userId); // Avoid duplicates
+    docs = [...docs, ...publicDocs];
+  }
 
   // 1b. Vector search (Client-side)
   const queryEmbedding = await getEmbedding(queryText);
 
-  const scoredDocs = dataset
+  const scoredDocs = docs
     .map(doc => ({
       ...doc,
       score: doc.embedding ? cosineSimilarity(queryEmbedding, doc.embedding) : 0
     }))
     .sort((a, b) => (b.score || 0) - (a.score || 0))
-    .slice(0, Math.min(k, dataset.length));
+    .slice(0, Math.min(k, docs.length));
 
   const contextText = scoredDocs.map(d => `[Source: ${d.id}] ${d.content}`).join("\n\n");
 

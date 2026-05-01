@@ -18,6 +18,7 @@ service cloud.firestore {
              data.content is string && data.content.size() <= 100000 &&
              data.type in ["text", "image"] &&
              data.userId == request.auth.uid &&
+             (data.isPublic == true || data.isPublic == false) &&
              data.embedding is list &&
              data.embedding.size() > 0 &&
              data.createdAt == request.time;
@@ -26,11 +27,11 @@ service cloud.firestore {
     match /knowledge/{knowledgeId} {
       allow create: if isSignedIn() && isValidKnowledge(incoming());
       
-      allow read, list: if isSignedIn() && isOwner(existing().userId);
+      allow read, list: if isSignedIn() && (isOwner(existing().userId) || existing().isPublic == true);
       
       allow update: if isSignedIn() && isOwner(existing().userId) && 
                       isValidKnowledge(incoming()) &&
-                      incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'embedding', 'metadata']);
+                      incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'embedding', 'metadata', 'isPublic']);
                       
       allow delete: if isSignedIn() && isOwner(existing().userId);
     }
