@@ -67,7 +67,7 @@ function calculateF1(prediction: string, context: string) {
 // Helper: Get Embedding
 export async function getEmbedding(text: string) {
   const ai = getAI();
-  const model = ai.getGenerativeModel({ model: "text-embedding-004" });
+  const model = ai.getGenerativeModel({ model: "text-embedding-001" });
   const resp = await model.embedContent(text);
   return resp.embedding.values;
 }
