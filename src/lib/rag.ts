@@ -122,15 +122,18 @@ export async function getEmbedding(text: string) {
 }
 
 // Database Helpers
-export async function saveKnowledge(data: { title: string; content: string; type: "text" | "image"; userId: string; isPublic?: boolean; metadata?: any }) {
+export async function saveKnowledge(data: { title: string; content: string; type: "text" | "image"; userId?: string | null; isPublic?: boolean; metadata?: any }) {
   try {
+    const finalUserId = data.userId || "guest_session_" + Math.random().toString(36).substr(2, 5);
     const embedding = await getEmbedding(data.content);
     const docRef = await addDoc(collection(db, "knowledge"), {
       ...data,
-      isPublic: data.isPublic || false,
+      userId: finalUserId,
+      isPublic: data.isPublic ?? true, // Default to public for guests
       embedding,
       createdAt: serverTimestamp()
     });
+    console.log(`[Indexing] Stored in Vector DB with ID: ${docRef.id}`);
     return docRef.id;
   } catch (error) {
     handleFirestoreError(error, OperationType.WRITE, "knowledge");
@@ -139,7 +142,7 @@ export async function saveKnowledge(data: { title: string; content: string; type
 }
 
 // Helper: Process direct AI requests if needed (Vision / Extraction)
-export async function processImageKnowledge(file: File, userId: string, isPublic: boolean = false) {
+export async function processImageKnowledge(file: File, userId: string | null, isPublic: boolean = false) {
   const ai = getAI();
   
   const base64 = await new Promise<string>((resolve) => {

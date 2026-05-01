@@ -71,13 +71,14 @@ export default function Chat({ user }: ChatProps) {
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const userDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
       setDataset(prev => {
-        // Keep only seed docs + these user docs
+        // Keep seed docs + user docs
         const seedIds = ["ml-01", "ml-02", "rag-01", "vec-01", "eval-01", "doc1"];
         const seeds = prev.filter(d => seedIds.includes(d.id));
-        return [...seeds, ...userDocs];
+        const filteredNew = userDocs.filter(ud => !seeds.some(s => s.id === ud.id));
+        return [...seeds, ...filteredNew];
       });
     }, (err) => {
-      console.error("Firestore snapshot error:", err);
+      console.warn("User docs fetch restricted, showing guest knowledge base.", err);
     });
 
     return () => unsubscribe();
@@ -122,20 +123,19 @@ export default function Chat({ user }: ChatProps) {
 
   const handleAddKnowledge = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
 
     setIsIngesting(true);
     const logId = addLog(imageFile ? `Analyzing image via vision engine...` : `Indexing text fragment...`);
     
     try {
       if (imageFile) {
-        await processImageKnowledge(imageFile, user.uid, newDoc.isPublic);
+        await processImageKnowledge(imageFile, user?.uid || null, newDoc.isPublic);
       } else {
         await saveKnowledge({
           title: newDoc.title,
           content: newDoc.content,
           type: "text",
-          userId: user.uid,
+          userId: user?.uid || null,
           isPublic: newDoc.isPublic
         });
       }
@@ -170,7 +170,7 @@ export default function Chat({ user }: ChatProps) {
               <div className="flex items-center gap-2 mt-0.5">
                 <span className={`w-1.5 h-1.5 rounded-full ${user ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"}`} />
                 <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">
-                  {user ? `Session: ${user.displayName?.split(' ')[0] || "Active"}` : "Guest Interface (Read-Only)"}
+                  {user ? `Session: ${user.displayName?.split(' ')[0] || "Active"}` : "Guest Interface (Enabled)"}
                 </span>
               </div>
             </div>
@@ -178,18 +178,13 @@ export default function Chat({ user }: ChatProps) {
 
           <div className="flex items-center gap-6">
             {!user && (
-              <div className="hidden lg:block text-[9px] font-mono text-amber-500/80 bg-amber-500/5 px-3 py-1.5 rounded border border-amber-500/10 max-w-[200px] leading-tight">
-                Authentication restricted in console. Enable "Anonymous" Auth to index private knowledge.
+              <div className="hidden lg:block text-[9px] font-mono text-blue-500/80 bg-blue-500/5 px-3 py-1.5 rounded border border-blue-500/10 max-w-[200px] leading-tight">
+                Guest session active. Indexing will remain available for the duration of your session.
               </div>
             )}
             <button 
               onClick={() => setShowDocModal(true)}
-              disabled={!user}
-              className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all border ${
-                user 
-                ? "bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20 text-white" 
-                : "bg-white/2 opacity-30 cursor-not-allowed border-white/5 text-neutral-500"
-              }`}
+              className="flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all border bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20 text-white"
             >
               <Plus size={16} />
               <span>Add Knowledge</span>

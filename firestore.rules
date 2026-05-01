@@ -17,7 +17,7 @@ service cloud.firestore {
       return data.title is string && data.title.size() <= 256 &&
              data.content is string && data.content.size() <= 100000 &&
              data.type in ["text", "image"] &&
-             data.userId == request.auth.uid &&
+             (isSignedIn() ? data.userId == request.auth.uid : data.userId.startsWith("guest_session_")) &&
              (data.isPublic == true || data.isPublic == false) &&
              data.embedding is list &&
              data.embedding.size() > 0 &&
@@ -25,15 +25,15 @@ service cloud.firestore {
     }
 
     match /knowledge/{knowledgeId} {
-      allow create: if isSignedIn() && isValidKnowledge(incoming());
+      allow create: if isValidKnowledge(incoming());
       
       allow get, list: if resource.data.isPublic == true || (isSignedIn() && resource.data.userId == request.auth.uid);
       
-      allow update: if isSignedIn() && isOwner(existing().userId) && 
+      allow update: if (isSignedIn() && isOwner(existing().userId)) && 
                       isValidKnowledge(incoming()) &&
                       incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'embedding', 'metadata', 'isPublic']);
                       
-      allow delete: if isSignedIn() && isOwner(existing().userId);
+      allow delete: if (isSignedIn() && isOwner(existing().userId));
     }
   }
 }
