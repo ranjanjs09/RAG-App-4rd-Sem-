@@ -2,6 +2,19 @@ import { GoogleGenAI } from "@google/genai";
 import { db, auth } from "./firebase";
 import { collection, query as firestoreQuery, where, getDocs, addDoc, serverTimestamp, orderBy, limit } from "firebase/firestore";
 
+// Initialize Gemini lazily
+let genAI: GoogleGenAI | null = null;
+function getAI() {
+  if (!genAI) {
+    const apiKey = process.env.GEMINI_API_KEY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is not defined in the environment.");
+    }
+    genAI = new GoogleGenAI({ apiKey });
+  }
+  return genAI;
+}
+
 enum OperationType {
   CREATE = 'create',
   UPDATE = 'update',
@@ -47,20 +60,6 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
   }
   console.error('Firestore Error Detailed: ', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
-}
-
-// Initialize Gemini lazily to ensure API key is available
-let genAI: GoogleGenAI | null = null;
-
-function getAI() {
-  if (!genAI) {
-    const apiKey = process.env.GEMINI_API_KEY;
-    if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined in the environment.");
-    }
-    genAI = new GoogleGenAI({ apiKey });
-  }
-  return genAI;
 }
 
 export interface Document {
@@ -112,30 +111,8 @@ function calculateF1(prediction: string, context: string) {
   return (2 * precision * recall) / (precision + recall);
 }
 
-// Helper: Get AI response directly (Secure on client in AI Studio)
-async function fetchAI(prompt: string, systemInstruction?: string) {
-  const ai = getAI();
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [{ parts: [{ text: prompt }] }],
-    config: {
-      systemInstruction: systemInstruction || "You are a helpful AI assistant."
-    }
-  });
-
-  return response.text || "No response text found";
-}
-
 // Helper: Get Embedding
 export async function getEmbedding(text: string) {
-  // We'll keep embeddings on client if the SDK supports it without a key, 
-  // but usually it requires one. Let's assume we want to stay secure.
-  // For simplicity in this fix, we'll keep the direct SDK call for embeddings if it's already working,
-  // but usually embeddings should also be proxied if keys are involved.
-  // HOWEVER, looking at the previous code, getAI() throws if no key.
-  // I will update getEmbedding to ALSO use the backend or a safer path if needed.
-  // Actually, I'll just keep getAI() for now but use the fetchAI for main generation.
-  
   const ai = getAI();
   const resp = await ai.models.embedContent({
     model: "gemini-embedding-2-preview",
@@ -161,6 +138,7 @@ export async function saveKnowledge(data: { title: string; content: string; type
   }
 }
 
+// Helper: Process direct AI requests if needed (Vision / Extraction)
 export async function processImageKnowledge(file: File, userId: string, isPublic: boolean = false) {
   const ai = getAI();
   
@@ -285,17 +263,33 @@ export async function processRAGQuery(
 3. If search is needed, use your internal reasoning to provide the most accurate answer.
 4. Keep it concise and helpful.`;
 
-  const answer = await fetchAI(promptText, systemInstruction);
+  const response = await ai.models.generateContent({
+    model: modelName,
+    contents: [{ parts: [{ text: promptText }] }],
+    config: {
+      systemInstruction
+    }
+  });
+
+  const answer = response.text || "No response generated.";
 
   // 3. Faithfulness Verification
   const verificationPrompt = `Context:\n${contextText}\n\nAnswer: ${answer}`;
   const verificationInstruction = `Analyze the faithfulness of the answer based on the provided context. Return ONLY JSON: { "score": 0.95, "alignment": [{ "text": "...", "docId": "..." }] }`;
 
-  const verificationText = await fetchAI(verificationPrompt, verificationInstruction);
+  const verificationResponse = await ai.models.generateContent({
+    model: "gemini-3-flash-preview",
+    contents: [{ parts: [{ text: verificationPrompt }] }],
+    config: {
+      systemInstruction: verificationInstruction,
+      responseMimeType: "application/json"
+    }
+  });
+
+  const verificationText = verificationResponse.text || "{}";
 
   let verificationData;
   try {
-    // Basic extraction if JSON is wrapped in markdown
     const jsonMatch = verificationText.match(/\{[\s\S]*\}/);
     verificationData = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(verificationText);
   } catch (e) {

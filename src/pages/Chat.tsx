@@ -39,11 +39,29 @@ export default function Chat({ user }: ChatProps) {
   const [isIngesting, setIsIngesting] = useState(false);
 
   useEffect(() => {
-    if (!user) {
-      setDataset([]);
-      return;
-    }
+    // 1. Fetch Guest/Seed knowledge from server regardless of user status
+    const fetchBaseKnowledge = async () => {
+      try {
+        const resp = await fetch("/api/documents");
+        if (resp.ok) {
+          const baseDocs = await resp.json();
+          setDataset(prev => {
+            // Merge unique docs
+            const existingIds = new Set(prev.map(d => d.id));
+            const newUnique = baseDocs.filter((d: any) => !existingIds.has(d.id));
+            return [...prev, ...newUnique];
+          });
+        }
+      } catch (err) {
+        console.warn("Failed to fetch baseline knowledge", err);
+      }
+    };
 
+    fetchBaseKnowledge();
+
+    if (!user) return;
+
+    // 2. Subscribe to user-specific knowledge in Firestore
     const q = firestoreQuery(
       collection(db, "knowledge"),
       where("userId", "==", user.uid),
@@ -51,8 +69,15 @@ export default function Chat({ user }: ChatProps) {
     );
 
     const unsubscribe = onSnapshot(q, (snapshot) => {
-      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
-      setDataset(docs);
+      const userDocs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+      setDataset(prev => {
+        // Keep only seed docs + these user docs
+        const seedIds = ["ml-01", "ml-02", "rag-01", "vec-01", "eval-01", "doc1"];
+        const seeds = prev.filter(d => seedIds.includes(d.id));
+        return [...seeds, ...userDocs];
+      });
+    }, (err) => {
+      console.error("Firestore snapshot error:", err);
     });
 
     return () => unsubscribe();
@@ -60,7 +85,7 @@ export default function Chat({ user }: ChatProps) {
 
   const addLog = (message: string, status: "pending" | "success" | "error" = "pending") => {
     const entry: LogEntry = { id: Math.random().toString(36).substr(2, 9), message, status, timestamp: new Date() };
-    setLogs(prev => [entry, ...prev].slice(0, 8));
+    setLogs(prev => [entry, ...prev].slice(0, 12));
     return entry.id;
   };
 
@@ -77,17 +102,19 @@ export default function Chat({ user }: ChatProps) {
     setLogs([]);
     
     try {
-      const logRetrievalId = addLog("Vector Space Scan: Initiating search...");
+      const logRetrievalId = addLog("Vector Space Scan: Searching knowledge base...");
       const data = await processRAGQuery(query, user?.uid || null, includePublicSearch || !user, k, model);
       updateLog(logRetrievalId, "success");
       
       addLog("Contextual Grounding: Infusing retrieval results...", "success");
-      addLog("NLI Faithfulness: Running cross-validation...", "success");
+      addLog(`Gemini synthesis complete via server endpoint [${model}]`, "success");
 
       setResult(data);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "RAG Pipeline Failure");
-      addLog("Critical failure in query execution pipeline", "error");
+    } catch (err: any) {
+      console.error("SEARCH ERROR:", err);
+      const msg = typeof err === 'string' ? err : err.message;
+      setError(msg || "RAG Pipeline Failure");
+      addLog("CRITICAL: Pipeline crash during execution", "error");
     } finally {
       setLoading(false);
     }

@@ -17,17 +17,37 @@ interface Document {
   content: string;
 }
 
-// Global dataset state
+// Global dataset state (Seed Knowledge Base)
 const dataset: Document[] = [
   {
-    id: "doc1",
-    title: "Introduction to RAG",
-    content: "Retrieval-Augmented Generation (RAG) is a technique that enhances large language models by retrieving relevant information from a knowledge base before generating a response. It helps reduce hallucinations and provides up-to-date information."
+    id: "ml-01",
+    title: "Introduction to Machine Learning",
+    content: "Machine Learning (ML) is a subset of AI that provides systems the ability to automatically learn and improve from experience without being explicitly programmed. It focuses on the development of computer programs that can access data and use it to learn for themselves."
   },
   {
-    id: "doc2",
-    title: "Dense Retrieval",
-    content: "Dense retrieval uses vector embeddings to find relevant documents. Instead of matching keywords, it compares the semantic meaning of queries and documents in a high-dimensional vector space, often using cosine similarity."
+    id: "ml-02",
+    title: "Supervised vs Unsupervised Learning",
+    content: "Supervised learning uses labeled datasets to train algorithms to classify data or predict outcomes accurately. Unsupervised learning uses machine learning algorithms to analyze and cluster unlabeled datasets, discovering hidden patterns or data groupings without the need for human intervention."
+  },
+  {
+    id: "rag-01",
+    title: "What is RAG?",
+    content: "Retrieval-Augmented Generation (RAG) is a technique that grants LLMs access to specific, up-to-date information beyond their initial training data. It involves retrieving relevant documents from an external knowledge base and passing them to the generator (LLM) to produce grounded responses."
+  },
+  {
+    id: "vec-01",
+    title: "Vector Embeddings",
+    content: "Vector embeddings represent text as numbers in a high-dimensional space. Words or sentences with similar meanings are placed close together, allowing computers to understand semantic relationships and perform efficient similarity searches."
+  },
+  {
+    id: "eval-01",
+    title: "Evaluating RAG Performance",
+    content: "RAG systems are often evaluated based on Faithfulness (Is the answer derived from context?), Answer Relevance (Does it solve the query?), and Retrieval Precision (Are the retrieved documents actually useful?)."
+  },
+  {
+    id: "doc1",
+    title: "FAITH RAG Overview",
+    content: "FAITH RAG is a modern retrieval-augmented generation framework designed for high fidelity and low latency. It uses advanced vector matching and a dual-stage verification process to ensure zero hallucinations."
   }
 ];
 
@@ -64,7 +84,7 @@ async function startServer() {
     });
   });
 
-  // Knowledge Retrieval (Metadata/Static fallback)
+  // Knowledge Retrieval
   app.get("/api/documents", (req, res) => {
     res.json(dataset);
   });
