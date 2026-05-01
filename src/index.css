@@ -18,12 +18,28 @@
   body {
     @apply bg-[#0a0a0c] text-neutral-200 antialiased selection:bg-blue-500/30;
   }
+
+  ::-webkit-scrollbar {
+    @apply w-1.5;
+  }
+
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    @apply bg-white/10 rounded-full hover:bg-white/20 transition-colors;
+  }
 }
 
 .glass-panel {
-  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-2xl;
+  @apply bg-white/[0.03] backdrop-blur-xl border border-white/[0.08] shadow-2xl transition-all duration-300;
+}
+
+.glass-panel:hover {
+  @apply border-white/20 bg-white/[0.05];
 }
 
 .glow-blue {
-  box-shadow: 0 0 40px -10px rgba(59, 130, 246, 0.2);
+  box-shadow: 0 0 40px -10px rgba(59, 130, 246, 0.15);
 }
