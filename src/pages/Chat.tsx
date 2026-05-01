@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from "react";
-import { Search, Loader2, BookOpen, ChevronRight, Quote, Settings, Database, Activity, Plus, Terminal, LogOut, FileText, Image, Upload } from "lucide-react";
+import { Search, Loader2, BookOpen, ChevronRight, Quote, Settings, Database, Activity, Plus, Terminal, FileText, Image, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
 import { processRAGQuery, RAGResponse, Document, saveKnowledge, processImageKnowledge } from "../lib/rag";
-import { logout, db } from "../lib/firebase";
+import { db } from "../lib/firebase";
 import { User } from "firebase/auth";
 import { collection, query as firestoreQuery, where, onSnapshot, orderBy } from "firebase/firestore";
 import { useNavigate } from "react-router-dom";
@@ -124,11 +124,6 @@ export default function Chat({ user }: ChatProps) {
     }
   };
 
-  const handleLogout = async () => {
-    await logout();
-    navigate("/");
-  };
-
   return (
     <div className="min-h-screen bg-[#070709] text-neutral-300 font-sans selection:bg-blue-500/30 overflow-x-hidden">
       {/* Ambient background glow */}
@@ -159,9 +154,6 @@ export default function Chat({ user }: ChatProps) {
               <span>Add Knowledge</span>
             </button>
             <div className="h-8 w-px bg-white/5 hidden md:block" />
-            <button onClick={handleLogout} className="p-2 text-neutral-500 hover:text-white transition-colors">
-              <LogOut size={20} />
-            </button>
             <div className="hidden md:flex items-center gap-3 text-xs font-mono text-neutral-400">
               <Database size={14} className="text-blue-500" />
               <span className="bg-white/5 px-2.5 py-1 rounded-md border border-white/5">{dataset.length} Elements indexed</span>
