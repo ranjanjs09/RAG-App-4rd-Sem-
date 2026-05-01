@@ -28,7 +28,7 @@ export default function App() {
   
   // Pipeline Stats & Config
   const [k, setK] = useState(3);
-  const [model, setModel] = useState("gemini-1.5-flash");
+  const [model, setModel] = useState("gemini-3-flash-preview");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [dataset, setDataset] = useState<Document[]>([]);
   
@@ -234,7 +234,7 @@ export default function App() {
                 <div>
                   <label className="text-sm font-bold text-white mb-4 block">Neural Architecture</label>
                   <div className="grid grid-cols-1 gap-2">
-                    {["gemini-1.5-flash", "gemini-1.5-pro"].map((m) => (
+                    {["gemini-3-flash-preview", "gemini-3.1-pro-preview"].map((m) => (
                       <button
                         key={m}
                         onClick={() => setModel(m)}
@@ -244,7 +244,7 @@ export default function App() {
                             : "bg-white/5 border-white/5 text-neutral-500 hover:border-white/10"
                         }`}
                       >
-                        {m === "gemini-1.5-flash" ? "Flash Optimized (Real-time)" : "Pro Reasoning (High Fidelity)"}
+                        {m === "gemini-3-flash-preview" ? "Flash Optimized (Real-time)" : "Pro Reasoning (High Fidelity)"}
                       </button>
                     ))}
                   </div>
