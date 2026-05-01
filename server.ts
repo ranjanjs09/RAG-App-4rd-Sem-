@@ -19,6 +19,7 @@ interface Document {
 
 // Global dataset state (Seed Knowledge Base)
 const dataset: Document[] = [
+  // ... (keep dataset entries)
   {
     id: "ml-01",
     title: "Introduction to Machine Learning",

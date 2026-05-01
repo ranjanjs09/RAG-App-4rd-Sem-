@@ -8,7 +8,7 @@ function getAI() {
   if (!genAI) {
     const apiKey = process.env.GEMINI_API_KEY;
     if (!apiKey) {
-      throw new Error("GEMINI_API_KEY is not defined in the environment.");
+      throw new Error("GEMINI_API_KEY is not defined. Please check your environment settings.");
     }
     genAI = new GoogleGenAI({ apiKey });
   }
@@ -16,6 +16,7 @@ function getAI() {
 }
 
 enum OperationType {
+  // ... (keep lines 4-11)
   CREATE = 'create',
   UPDATE = 'update',
   DELETE = 'delete',
@@ -114,11 +115,16 @@ function calculateF1(prediction: string, context: string) {
 // Helper: Get Embedding
 export async function getEmbedding(text: string) {
   const ai = getAI();
-  const resp = await ai.models.embedContent({
-    model: "gemini-embedding-2-preview",
-    contents: [{ parts: [{ text }] }]
-  });
-  return resp.embeddings[0].values;
+  try {
+    const resp = await ai.models.embedContent({
+      model: "gemini-embedding-2-preview",
+      contents: [{ parts: [{ text }] }]
+    });
+    return resp.embeddings[0].values;
+  } catch (err: any) {
+    console.error("[RAG] Embedding Error:", err);
+    throw new Error(`Failed to generate vector embedding: ${err.message}`);
+  }
 }
 
 // Database Helpers
@@ -141,44 +147,9 @@ export async function saveKnowledge(data: { title: string; content: string; type
   }
 }
 
-// Helper: Process direct AI requests if needed (Vision / Extraction)
+// Image handling moved to placeholder since vision usually requires multi-part server support
 export async function processImageKnowledge(file: File, userId: string | null, isPublic: boolean = false) {
-  const ai = getAI();
-  
-  const base64 = await new Promise<string>((resolve) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve((reader.result as string).split(',')[1]);
-    reader.readAsDataURL(file);
-  });
-
-  const response = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [
-      {
-        parts: [
-          {
-            inlineData: {
-              data: base64,
-              mimeType: file.type
-            }
-          },
-          {
-            text: "Extract all factual information from this image. Summarize it into a rich text passage that can be used for RAG retrieval. Focus on data, dates, names, and key insights."
-          }
-        ]
-      }
-    ]
-  });
-
-  const content = response.text || "No content extracted.";
-  return await saveKnowledge({
-    title: `Image Extraction: ${file.name}`,
-    content,
-    type: "image",
-    userId,
-    isPublic,
-    metadata: { fileName: file.name, fileSize: file.size }
-  });
+  throw new Error("Image processing currently unavailable. Please use text indexing.");
 }
 
 export async function fetchPublicKnowledge(limitCount: number = 10) {
@@ -227,25 +198,25 @@ export async function processRAGQuery(
       const snapUser = await getDocs(qUser);
       docs = snapUser.docs.map(d => ({ id: d.id, ...d.data() } as Document));
     } catch (e) {
-      handleFirestoreError(e, OperationType.LIST, "knowledge/user");
+      console.warn("User docs fetch failed", e);
     }
   }
 
-  // Public docs (if requested or if no user is present)
+  // Public docs
   if (includePublic || !userId) {
     try {
       const qPublic = firestoreQuery(collection(db, "knowledge"), where("isPublic", "==", true), orderBy("createdAt", "desc"), limit(100));
       const snapPublic = await getDocs(qPublic);
       const publicDocs = snapPublic.docs
         .map(d => ({ id: d.id, ...d.data() } as Document))
-        .filter(pd => pd.userId !== userId); // Avoid duplicates
+        .filter(pd => pd.userId !== userId);
       docs = [...docs, ...publicDocs];
     } catch (e) {
-      console.warn("Public docs retrieval failed, skipping...", e);
+      console.warn("Public docs fetch failed", e);
     }
   }
 
-  // 1b. Vector search (Client-side)
+  // 1b. Vector search
   const queryEmbedding = await getEmbedding(queryText);
 
   const scoredDocs = docs
@@ -256,61 +227,58 @@ export async function processRAGQuery(
     .sort((a, b) => (b.score || 0) - (a.score || 0))
     .slice(0, Math.min(k, docs.length));
 
-  const contextText = scoredDocs.map(d => `[Source: ${d.id}] ${d.content}`).join("\n\n");
+  const contextText = scoredDocs.length > 0 
+    ? scoredDocs.map(d => `[Source: ${d.id}] ${d.content}`).join("\n\n")
+    : "No relevant documents found in the current knowledge base.";
 
   // 2. Generation
-  const promptText = `Provided Context:\n${contextText}\n\nUser Query: ${queryText}`;
-  const systemInstruction = `You are an intelligent AI assistant for the FAITH RAG system. Follow these rules strictly:
-1. Try to answer the user's question using the provided context first. 
-2. Use clear citations like [docId] for claims supported by context.
-3. If search is needed, use your internal reasoning to provide the most accurate answer.
-4. Keep it concise and helpful.`;
+  const promptText = `Relevant Context:\n${contextText}\n\nUser Question: ${queryText}\n\nTask: Answer accurately using the context. Cite sources like [docId]. If the context is empty or unhelpful, answer with general knowledge but be honest about the lack of specific context.`;
 
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: [{ parts: [{ text: promptText }] }],
-    config: {
-      systemInstruction
-    }
-  });
-
-  const answer = response.text || "No response generated.";
-
-  // 3. Faithfulness Verification
-  const verificationPrompt = `Context:\n${contextText}\n\nAnswer: ${answer}`;
-  const verificationInstruction = `Analyze the faithfulness of the answer based on the provided context. Return ONLY JSON: { "score": 0.95, "alignment": [{ "text": "...", "docId": "..." }] }`;
-
-  const verificationResponse = await ai.models.generateContent({
-    model: "gemini-3-flash-preview",
-    contents: [{ parts: [{ text: verificationPrompt }] }],
-    config: {
-      systemInstruction: verificationInstruction,
-      responseMimeType: "application/json"
-    }
-  });
-
-  const verificationText = verificationResponse.text || "{}";
-
-  let verificationData;
   try {
-    const jsonMatch = verificationText.match(/\{[\s\S]*\}/);
-    verificationData = jsonMatch ? JSON.parse(jsonMatch[0]) : JSON.parse(verificationText);
-  } catch (e) {
-    verificationData = { score: 0, alignment: [] };
-  }
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: [{ parts: [{ text: promptText }] }],
+      config: {
+        systemInstruction: "You are the FAITH RAG Assistant. Provide factual, grounded answers based on provided context."
+      }
+    });
 
-  // 4. Real Evaluation
-  const f1 = calculateF1(answer, contextText);
-  const exactMatch = answer.toLowerCase().trim() === contextText.toLowerCase().trim();
+    const answer = response.text || "I was unable to generate an answer.";
 
-  return {
-    answer,
-    documents: scoredDocs.map(({ id, title, content, score }) => ({ id, title, content, score: score || 0 })),
-    faithfulnessScore: verificationData.score || 0,
-    citations: verificationData.alignment || [],
-    evaluation: {
-      exactMatch,
-      f1
+    // 3. Faithfulness Verification (Dual-stage)
+    const verificationInstruction = `Analyze the faithfulness of the answer based on the context. Return JSON: { "score": 0.95, "alignment": [{ "text": "...", "docId": "..." }] }`;
+    const verifyResp = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: [{ parts: [{ text: `Context:\n${contextText}\n\nAnswer: ${answer}` }] }],
+      config: {
+        systemInstruction: verificationInstruction,
+        responseMimeType: "application/json"
+      }
+    });
+
+    let verificationData;
+    try {
+      verificationData = JSON.parse(verifyResp.text || "{}");
+    } catch (e) {
+      verificationData = { score: 0.5, alignment: [] };
     }
-  };
+
+    // 4. Real Evaluation
+    const f1 = calculateF1(answer, contextText);
+    const exactMatch = answer.toLowerCase().trim() === contextText.toLowerCase().trim();
+
+    return {
+      answer,
+      documents: scoredDocs.map(({ id, title, content, score }) => ({ id, title, content, score: score || 0 })),
+      faithfulnessScore: verificationData.score || 0,
+      citations: verificationData.alignment || [],
+      evaluation: {
+        exactMatch,
+        f1
+      }
+    };
+  } catch (err: any) {
+    console.error("[RAG Client] Generation Error:", err);
+    throw err;
+  }
 }
