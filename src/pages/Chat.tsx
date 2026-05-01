@@ -142,7 +142,7 @@ export default function Chat({ user }: ChatProps) {
               <Activity size={22} strokeWidth={2.5} />
             </div>
             <div>
-              <h1 className="text-xl font-display font-bold tracking-tight text-white">VERI<span className="text-blue-500">FAITH</span></h1>
+              <h1 className="text-xl font-display font-bold tracking-tight text-white">FAITH<span className="text-blue-500"> RAG</span></h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
                 <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">Session: {user?.displayName?.split(' ')[0]} Active</span>
@@ -573,7 +573,7 @@ export default function Chat({ user }: ChatProps) {
           <div className="flex flex-col md:flex-row items-center justify-between gap-8">
             <div className="flex items-center gap-3 opacity-40 grayscale transition-all hover:grayscale-0 hover:opacity-100">
                <Activity size={24} className="text-blue-500" />
-               <span className="font-display font-medium text-white tracking-widest text-sm uppercase">VeriFaith Protocol 2.0</span>
+               <span className="font-display font-medium text-white tracking-widest text-sm uppercase">Faith RAG Protocol 2.0</span>
             </div>
             <div className="flex gap-12">
                {["Pipeline Logic", "Security Layers", "API Interface", "Lab Docs"].map((l) => (

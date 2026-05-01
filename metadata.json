@@ -1,5 +1,5 @@
 {
-  "name": "VeriFaith RAG System",
+  "name": "Faith RAG System",
   "description": "Advanced Multimodal RAG system with Firebase integration, vision-based knowledge ingestion, and real-time faithfulness verification.",
   "requestFramePermissions": [],
   "majorCapabilities": []
