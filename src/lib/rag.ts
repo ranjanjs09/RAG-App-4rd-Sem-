@@ -180,11 +180,24 @@ export async function processRAGQuery(
   // 2. Generation
   const generationResponse = await ai.models.generateContent({
     model: modelName,
-    contents: `Context:\n${contextText}\n\nQuery: ${queryText}`,
+    contents: `Provided Context:\n${contextText}\n\nUser Query: ${queryText}`,
     config: {
-      systemInstruction: `You are a faithful assistant. Answer the user query strictly using the provided context. 
-      If the answer is not in the context, say you don't know and do not use your external knowledge.
-      Provide citations in the format [docId] after each claim. Keep the answer concise.`,
+      tools: [{ googleSearch: {} }],
+      systemInstruction: `You are an intelligent AI assistant. Follow these rules strictly:
+1. Try to answer the user's question using the provided context first. 
+2. If the answer is not found in the context OR your confidence is low: Automatically use the Google Search tool to find relevant, up-to-date information from the internet.
+3. Extract the most accurate and reliable information.
+4. Summarize the information in a clear and easy-to-understand way.
+5. Do NOT mention that you searched Google unless explicitly asked.
+6. Ensure the answer is factual and not misleading.
+7. If multiple sources are available (context + search), combine them to present the best answer.
+8. If no reliable information is found after both context check and search, clearly say: "I couldn't find reliable information on this topic."
+
+Output format:
+- Clear explanation
+- Use bullet points if needed
+- Keep it concise but informative
+- For claims supported by the provided context, include citations in the format [docId].`,
     }
   });
 
