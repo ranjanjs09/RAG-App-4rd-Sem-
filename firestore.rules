@@ -27,7 +27,7 @@ service cloud.firestore {
     match /knowledge/{knowledgeId} {
       allow create: if isSignedIn() && isValidKnowledge(incoming());
       
-      allow read, list: if isSignedIn() && (isOwner(existing().userId) || existing().isPublic == true);
+      allow read, list: if (resource.data.isPublic == true) || (isSignedIn() && isOwner(resource.data.userId));
       
       allow update: if isSignedIn() && isOwner(existing().userId) && 
                       isValidKnowledge(incoming()) &&

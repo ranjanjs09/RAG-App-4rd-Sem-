@@ -139,7 +139,7 @@ export async function fetchPublicKnowledge(limitCount: number = 10) {
 
 export async function processRAGQuery(
   queryText: string, 
-  userId: string,
+  userId: string | null,
   includePublic: boolean = false,
   k: number = 3, 
   modelName: string = "gemini-3-flash-preview"
@@ -150,12 +150,14 @@ export async function processRAGQuery(
   let docs: Document[] = [];
   
   // User docs
-  const qUser = firestoreQuery(collection(db, "knowledge"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(100));
-  const snapUser = await getDocs(qUser);
-  docs = snapUser.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+  if (userId) {
+    const qUser = firestoreQuery(collection(db, "knowledge"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(100));
+    const snapUser = await getDocs(qUser);
+    docs = snapUser.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+  }
 
-  // Public docs (if requested)
-  if (includePublic) {
+  // Public docs (if requested or if no user is present)
+  if (includePublic || !userId) {
     const qPublic = firestoreQuery(collection(db, "knowledge"), where("isPublic", "==", true), orderBy("createdAt", "desc"), limit(100));
     const snapPublic = await getDocs(qPublic);
     const publicDocs = snapPublic.docs

@@ -17,7 +17,7 @@ export default function App() {
         try {
           await loginAnonymously();
         } catch (err) {
-          console.error("Anonymous authentication failed", err);
+          console.error("Authentication unavailable. Using Guest Mode.", err);
           setAuthLoading(false);
         }
       } else {
@@ -53,11 +53,11 @@ export default function App() {
       <Routes>
         <Route 
           path="/" 
-          element={user ? <Chat user={user} /> : <div className="min-h-screen bg-[#070709]" />} 
+          element={<Chat user={user} />} 
         />
         <Route 
           path="/chat" 
-          element={user ? <Chat user={user} /> : <Navigate to="/" replace />} 
+          element={<Chat user={user} />} 
         />
         {/* Fallback */}
         <Route path="*" element={<Navigate to="/" replace />} />

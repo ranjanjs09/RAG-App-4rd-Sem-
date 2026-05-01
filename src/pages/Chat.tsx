@@ -15,14 +15,14 @@ interface LogEntry {
 }
 
 interface ChatProps {
-  user: User;
+  user: User | null;
 }
 
 export default function Chat({ user }: ChatProps) {
   const navigate = useNavigate();
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [includePublicSearch, setIncludePublicSearch] = useState(false);
+  const [includePublicSearch, setIncludePublicSearch] = useState(true);
   const [result, setResult] = useState<RAGResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   
@@ -37,10 +37,12 @@ export default function Chat({ user }: ChatProps) {
   const [newDoc, setNewDoc] = useState({ title: "", content: "", isPublic: false });
   const [imageFile, setImageFile] = useState<File | null>(null);
   const [isIngesting, setIsIngesting] = useState(false);
-  const [publicDocs, setPublicDocs] = useState<Document[]>([]);
 
   useEffect(() => {
-    if (!user) return;
+    if (!user) {
+      setDataset([]);
+      return;
+    }
 
     const q = firestoreQuery(
       collection(db, "knowledge"),
@@ -68,7 +70,7 @@ export default function Chat({ user }: ChatProps) {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim() || !user) return;
+    if (!query.trim()) return;
 
     setLoading(true);
     setError(null);
@@ -76,7 +78,7 @@ export default function Chat({ user }: ChatProps) {
     
     try {
       const logRetrievalId = addLog("Vector Space Scan: Initiating search...");
-      const data = await processRAGQuery(query, user.uid, includePublicSearch, k, model);
+      const data = await processRAGQuery(query, user?.uid || null, includePublicSearch || !user, k, model);
       updateLog(logRetrievalId, "success");
       
       addLog("Contextual Grounding: Infusing retrieval results...", "success");
@@ -131,7 +133,7 @@ export default function Chat({ user }: ChatProps) {
       <div className="fixed bottom-0 right-1/4 w-[400px] h-[400px] bg-purple-600/10 rounded-full blur-[120px] -z-10" />
 
       <header className="h-20 border-b border-white/5 bg-white/[0.02] backdrop-blur-md sticky top-0 z-50">
-        <div className="max-w-[1600px] mx-auto px-6 h-full flex items-center justify-between">
+        <div className="w-full px-6 h-full flex items-center justify-between">
           <div className="flex items-center gap-4">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-blue-700 rounded-xl flex items-center justify-center text-white shadow-[0_0_20px_rgba(59,130,246,0.3)]">
               <Activity size={22} strokeWidth={2.5} />
@@ -139,16 +141,28 @@ export default function Chat({ user }: ChatProps) {
             <div>
               <h1 className="text-xl font-display font-bold tracking-tight text-white">FAITH<span className="text-blue-500"> RAG</span></h1>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">Session: {user?.displayName?.split(' ')[0]} Active</span>
+                <span className={`w-1.5 h-1.5 rounded-full ${user ? "bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" : "bg-amber-500 shadow-[0_0_8px_rgba(245,158,11,0.6)]"}`} />
+                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">
+                  {user ? `Session: ${user.displayName?.split(' ')[0] || "Active"}` : "Guest Interface (Read-Only)"}
+                </span>
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-6">
+            {!user && (
+              <div className="hidden lg:block text-[9px] font-mono text-amber-500/80 bg-amber-500/5 px-3 py-1.5 rounded border border-amber-500/10 max-w-[200px] leading-tight">
+                Authentication restricted in console. Enable "Anonymous" Auth to index private knowledge.
+              </div>
+            )}
             <button 
               onClick={() => setShowDocModal(true)}
-              className="flex items-center gap-2.5 px-4 py-2 bg-white/5 hover:bg-white/10 rounded-lg text-sm font-semibold transition-all border border-white/10 hover:border-white/20 text-white"
+              disabled={!user}
+              className={`flex items-center gap-2.5 px-4 py-2 rounded-lg text-sm font-semibold transition-all border ${
+                user 
+                ? "bg-white/5 hover:bg-white/10 border-white/10 hover:border-white/20 text-white" 
+                : "bg-white/2 opacity-30 cursor-not-allowed border-white/5 text-neutral-500"
+              }`}
             >
               <Plus size={16} />
               <span>Add Knowledge</span>
@@ -163,7 +177,7 @@ export default function Chat({ user }: ChatProps) {
       </header>
 
 
-      <main className="max-w-[1600px] mx-auto px-6 py-10">
+      <main className="w-full px-6 py-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
           
           {/* Sidebar: Diagnostics & Controls */}
@@ -561,7 +575,7 @@ export default function Chat({ user }: ChatProps) {
       </AnimatePresence>
 
       <footer className="mt-40 border-t border-white/[0.05] py-16 bg-white/[0.01]">
-        <div className="max-w-[1600px] mx-auto px-6">
+        <div className="w-full px-6">
           <div className="flex flex-col md:flex-row items-center justify-between gap-8">
             <div className="flex items-center gap-3 opacity-40 grayscale transition-all hover:grayscale-0 hover:opacity-100">
                <Activity size={24} className="text-blue-500" />
