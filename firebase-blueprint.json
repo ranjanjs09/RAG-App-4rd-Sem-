@@ -1,0 +1,29 @@
+{
+  "entities": {
+    "KnowledgeBase": {
+      "title": "Knowledge Base Entity",
+      "description": "Represents a document or image-derived knowledge segment in the RAG system.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "content": { "type": "string" },
+        "embedding": { 
+          "type": "array",
+          "items": { "type": "number" }
+        },
+        "userId": { "type": "string" },
+        "type": { "type": "string", "enum": ["text", "image"] },
+        "createdAt": { "type": "string", "format": "date-time" },
+        "metadata": { "type": "object" }
+      },
+      "required": ["title", "content", "userId", "type", "createdAt"]
+    }
+  },
+  "firestore": {
+    "/knowledge": {
+      "schema": "KnowledgeBase",
+      "description": "Collection of knowledge documents and image extractions for retrieval."
+    }
+  }
+}

@@ -1,6 +1,6 @@
 {
   "name": "VeriFaith RAG System",
-  "description": "A Retrieval-Augmented Generation system with built-in faithfulness verification and citation alignment.",
+  "description": "Advanced Multimodal RAG system with Firebase integration, vision-based knowledge ingestion, and real-time faithfulness verification.",
   "requestFramePermissions": [],
   "majorCapabilities": []
 }

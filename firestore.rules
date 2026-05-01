@@ -1,0 +1,38 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Global Deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Common Helpers
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    
+    function isValidKnowledge(data) {
+      return data.title is string && data.title.size() <= 256 &&
+             data.content is string && data.content.size() <= 100000 &&
+             data.type in ["text", "image"] &&
+             data.userId == request.auth.uid &&
+             data.embedding is list &&
+             data.embedding.size() > 0 &&
+             data.createdAt == request.time;
+    }
+
+    match /knowledge/{knowledgeId} {
+      allow create: if isSignedIn() && isValidKnowledge(incoming());
+      
+      allow read, list: if isSignedIn() && isOwner(existing().userId);
+      
+      allow update: if isSignedIn() && isOwner(existing().userId) && 
+                      isValidKnowledge(incoming()) &&
+                      incoming().diff(existing()).affectedKeys().hasOnly(['title', 'content', 'embedding', 'metadata']);
+                      
+      allow delete: if isSignedIn() && isOwner(existing().userId);
+    }
+  }
+}

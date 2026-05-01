@@ -4,9 +4,12 @@
  */
 
 import React, { useState, useEffect } from "react";
-import { Search, Loader2, BookOpen, CheckCircle2, AlertCircle, FileText, ChevronRight, Quote, Info, Settings, Database, Activity, Plus, Terminal } from "lucide-react";
+import { Search, Loader2, BookOpen, CheckCircle2, AlertCircle, FileText, ChevronRight, Quote, Info, Settings, Database, Activity, Plus, Terminal, LogIn, LogOut, Image, Upload } from "lucide-react";
 import { motion, AnimatePresence } from "motion/react";
-import { processRAGQuery, RAGResponse, Document } from "./lib/rag";
+import { processRAGQuery, RAGResponse, Document, saveKnowledge, processImageKnowledge } from "./lib/rag";
+import { auth, loginWithGoogle, logout, db } from "./lib/firebase";
+import { onAuthStateChanged, User } from "firebase/auth";
+import { collection, query as firestoreQuery, where, onSnapshot, orderBy } from "firebase/firestore";
 
 interface LogEntry {
   id: string;
@@ -16,6 +19,8 @@ interface LogEntry {
 }
 
 export default function App() {
+  const [user, setUser] = useState<User | null>(null);
+  const [authLoading, setAuthLoading] = useState(true);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<RAGResponse | null>(null);
@@ -23,29 +28,43 @@ export default function App() {
   
   // Pipeline Stats & Config
   const [k, setK] = useState(3);
-  const [model, setModel] = useState("gemini-3-flash-preview");
+  const [model, setModel] = useState("gemini-1.5-flash");
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [dataset, setDataset] = useState<Document[]>([]);
   
   // Doc Management
   const [showDocModal, setShowDocModal] = useState(false);
   const [newDoc, setNewDoc] = useState({ title: "", content: "" });
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [isIngesting, setIsIngesting] = useState(false);
 
   useEffect(() => {
-    fetchDocuments();
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+    return () => unsubscribe();
   }, []);
 
-  const fetchDocuments = async () => {
-    try {
-      const res = await fetch("/api/documents");
-      if (res.ok) {
-        const data = await res.json();
-        setDataset(data);
-      }
-    } catch (err) {
-      console.error("Failed to load documents", err);
+  useEffect(() => {
+    if (!user) {
+      setDataset([]);
+      return;
     }
-  };
+
+    const q = firestoreQuery(
+      collection(db, "knowledge"),
+      where("userId", "==", user.uid),
+      orderBy("createdAt", "desc")
+    );
+
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const docs = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
+      setDataset(docs);
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   const addLog = (message: string, status: "pending" | "success" | "error" = "pending") => {
     const entry: LogEntry = { id: Math.random().toString(36).substr(2, 9), message, status, timestamp: new Date() };
@@ -59,7 +78,7 @@ export default function App() {
 
   const handleSearch = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!query.trim()) return;
+    if (!query.trim() || !user) return;
 
     setLoading(true);
     setError(null);
@@ -67,7 +86,7 @@ export default function App() {
     
     try {
       const logRetrievalId = addLog("Vector Space Scan: Initiating search...");
-      const data = await processRAGQuery(query, dataset, k, model);
+      const data = await processRAGQuery(query, user.uid, k, model);
       updateLog(logRetrievalId, "success");
       
       addLog("Contextual Grounding: Infusing retrieval results...", "success");
@@ -76,32 +95,72 @@ export default function App() {
       setResult(data);
     } catch (err) {
       setError(err instanceof Error ? err.message : "RAG Pipeline Failure");
+      addLog("Critical failure in query execution pipeline", "error");
     } finally {
       setLoading(false);
     }
   };
 
-  const handleAddDocument = async (e: React.FormEvent) => {
+  const handleAddKnowledge = async (e: React.FormEvent) => {
     e.preventDefault();
-    const logId = addLog(`Indexing "${newDoc.title}"...`);
+    if (!user) return;
+
+    setIsIngesting(true);
+    const logId = addLog(imageFile ? `Analyzing image via vision engine...` : `Indexing text fragment...`);
+    
     try {
-      const res = await fetch("/api/documents", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(newDoc),
-      });
-      if (res.ok) {
-        updateLog(logId, "success");
-        setNewDoc({ title: "", content: "" });
-        setShowDocModal(false);
-        fetchDocuments();
+      if (imageFile) {
+        await processImageKnowledge(imageFile, user.uid);
       } else {
-        updateLog(logId, "error");
+        await saveKnowledge({
+          title: newDoc.title,
+          content: newDoc.content,
+          type: "text",
+          userId: user.uid
+        });
       }
+      
+      updateLog(logId, "success");
+      setNewDoc({ title: "", content: "" });
+      setImageFile(null);
+      setShowDocModal(false);
     } catch (err) {
+      console.error(err);
       updateLog(logId, "error");
+      setError("Knowledge ingestion failed. Check your connection.");
+    } finally {
+      setIsIngesting(false);
     }
   };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-[#070709] flex items-center justify-center">
+        <Loader2 className="text-blue-500 animate-spin" size={40} />
+      </div>
+    );
+  }
+
+  if (!user) {
+    return (
+      <div className="min-h-screen bg-[#070709] flex flex-col items-center justify-center p-6 font-sans">
+        <div className="w-20 h-20 bg-blue-600 rounded-3xl flex items-center justify-center text-white mb-8 shadow-[0_0_40px_rgba(59,130,246,0.3)]">
+          <Activity size={40} />
+        </div>
+        <h1 className="text-4xl font-display font-bold text-white mb-4">VERI<span className="text-blue-500">FAITH</span></h1>
+        <p className="text-neutral-500 text-center max-w-md mb-10 leading-relaxed font-medium">
+          Secure, grounded, and multimodal Retrieval Augmented Generation research platform.
+        </p>
+        <button 
+          onClick={() => loginWithGoogle()}
+          className="flex items-center gap-4 bg-white text-black px-8 py-4 rounded-2xl font-bold hover:bg-neutral-200 transition-all shadow-xl active:scale-95"
+        >
+          <LogIn size={20} />
+          <span>Access Command Interface</span>
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#070709] text-neutral-300 font-sans selection:bg-blue-500/30 overflow-x-hidden">
@@ -119,7 +178,7 @@ export default function App() {
               <h1 className="text-xl font-display font-bold tracking-tight text-white">VERI<span className="text-blue-500">FAITH</span></h1>
               <div className="flex items-center gap-2 mt-0.5">
                 <span className="w-1.5 h-1.5 rounded-full bg-green-500 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
-                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">Pipeline: Neutralized</span>
+                <span className="text-[10px] font-mono text-neutral-500 uppercase tracking-widest font-medium">Session: {user?.displayName?.split(' ')[0]} Active</span>
               </div>
             </div>
           </div>
@@ -133,13 +192,17 @@ export default function App() {
               <span>Add Knowledge</span>
             </button>
             <div className="h-8 w-px bg-white/5 hidden md:block" />
+            <button onClick={() => logout()} className="p-2 text-neutral-500 hover:text-white transition-colors">
+              <LogOut size={20} />
+            </button>
             <div className="hidden md:flex items-center gap-3 text-xs font-mono text-neutral-400">
               <Database size={14} className="text-blue-500" />
-              <span className="bg-white/5 px-2.5 py-1 rounded-md border border-white/5">{dataset.length} Entities indexed</span>
+              <span className="bg-white/5 px-2.5 py-1 rounded-md border border-white/5">{dataset.length} Elements indexed</span>
             </div>
           </div>
         </div>
       </header>
+
 
       <main className="max-w-[1600px] mx-auto px-6 py-10">
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-10">
@@ -171,7 +234,7 @@ export default function App() {
                 <div>
                   <label className="text-sm font-bold text-white mb-4 block">Neural Architecture</label>
                   <div className="grid grid-cols-1 gap-2">
-                    {["gemini-3-flash-preview", "gemini-3.1-pro-preview"].map((m) => (
+                    {["gemini-1.5-flash", "gemini-1.5-pro"].map((m) => (
                       <button
                         key={m}
                         onClick={() => setModel(m)}
@@ -181,7 +244,7 @@ export default function App() {
                             : "bg-white/5 border-white/5 text-neutral-500 hover:border-white/10"
                         }`}
                       >
-                        {m === "gemini-3-flash-preview" ? "Flash Optimized (Real-time)" : "Pro Reasoning (High Fidelity)"}
+                        {m === "gemini-1.5-flash" ? "Flash Optimized (Real-time)" : "Pro Reasoning (High Fidelity)"}
                       </button>
                     ))}
                   </div>
@@ -428,30 +491,76 @@ export default function App() {
                 </button>
               </div>
 
-              <form onSubmit={handleAddDocument} className="space-y-8">
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 block">Document Identifier</label>
-                  <input 
-                    type="text" required value={newDoc.title}
-                    onChange={e => setNewDoc(prev => ({ ...prev, title: e.target.value }))}
-                    className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-5 py-4 outline-none focus:border-blue-500/50 transition-all font-medium text-white"
-                    placeholder="e.g. Fundamental Laws of Retrieval"
-                  />
+              <form onSubmit={handleAddKnowledge} className="space-y-8">
+                <div className="flex gap-4 p-1 bg-white/[0.03] rounded-2xl border border-white/5">
+                   <button
+                     type="button"
+                     onClick={() => setImageFile(null)}
+                     className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold transition-all ${
+                       !imageFile ? "bg-blue-600 text-white shadow-lg" : "text-neutral-500 hover:text-white"
+                     }`}
+                   >
+                     <FileText size={14} /> TEXT
+                   </button>
+                   <button
+                     type="button"
+                     className={`flex-1 flex items-center justify-center gap-2 py-3 rounded-xl text-xs font-bold transition-all border border-transparent ${
+                       imageFile ? "bg-blue-600 text-white shadow-lg" : "text-neutral-500 hover:text-white"
+                     }`}
+                     onClick={() => document.getElementById('image-upload')?.click()}
+                   >
+                     <Image size={14} /> VISUAL
+                   </button>
+                   <input 
+                    id="image-upload" type="file" accept="image/*" className="hidden" 
+                    onChange={(e) => setImageFile(e.target.files?.[0] || null)}
+                   />
                 </div>
-                <div>
-                  <label className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 block">Dense Knowledge Content</label>
-                  <textarea 
-                    required value={newDoc.content} rows={6}
-                    onChange={e => setNewDoc(prev => ({ ...prev, content: e.target.value }))}
-                    className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-5 py-4 outline-none focus:border-blue-500/50 transition-all font-medium resize-none text-white text-sm"
-                    placeholder="Paste the factual source content here for indexing..."
-                  />
-                </div>
+
+                {!imageFile ? (
+                  <>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 block">Document Identifier</label>
+                      <input 
+                        type="text" required value={newDoc.title}
+                        onChange={e => setNewDoc(prev => ({ ...prev, title: e.target.value }))}
+                        className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-5 py-4 outline-none focus:border-blue-500/50 transition-all font-medium text-white"
+                        placeholder="e.g. Fundamental Laws of Retrieval"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs font-bold uppercase tracking-widest text-neutral-500 mb-3 block">Dense Knowledge Content</label>
+                      <textarea 
+                        required value={newDoc.content} rows={6}
+                        onChange={e => setNewDoc(prev => ({ ...prev, content: e.target.value }))}
+                        className="w-full bg-white/[0.03] border border-white/5 rounded-2xl px-5 py-4 outline-none focus:border-blue-500/50 transition-all font-medium resize-none text-white text-sm"
+                        placeholder="Paste the factual source content here for indexing..."
+                      />
+                    </div>
+                  </>
+                ) : (
+                  <div className="py-10 text-center border-2 border-dashed border-white/10 rounded-3xl bg-white/[0.01]">
+                    <div className="w-16 h-16 bg-blue-500/10 rounded-full flex items-center justify-center mx-auto mb-4 border border-blue-500/20">
+                      <Upload className="text-blue-400" size={24} />
+                    </div>
+                    <p className="text-sm font-bold text-white mb-1">{imageFile.name}</p>
+                    <p className="text-xs text-neutral-500 uppercase">{(imageFile.size / 1024).toFixed(1)} KB Ready for Vision Extraction</p>
+                    <button 
+                      type="button" onClick={() => setImageFile(null)}
+                      className="mt-6 text-xs font-bold text-red-500 hover:text-red-400 transition-colors"
+                    >
+                      Remove and switch to text
+                    </button>
+                  </div>
+                )}
+                
                 <button 
                   type="submit"
-                  className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl shadow-[0_15px_30px_-10px_rgba(59,130,246,0.3)] transition-all active:scale-[0.98] flex items-center justify-center gap-3"
+                  disabled={isIngesting || (!imageFile && (!newDoc.title || !newDoc.content))}
+                  className="w-full py-5 bg-blue-600 hover:bg-blue-500 text-white font-bold rounded-2xl shadow-[0_15px_30px_-10px_rgba(59,130,246,0.3)] transition-all active:scale-[0.98] flex items-center justify-center gap-3 disabled:opacity-50"
                 >
-                  <Search size={18} /> INDEX NEURAL MEMORY
+                  {isIngesting ? <Loader2 className="animate-spin" size={18} /> : <Search size={18} />}
+                  {isIngesting ? "PROCESSING NEURAL MEMORY..." : "INDEX NEURAL MEMORY"}
                 </button>
               </form>
             </motion.div>

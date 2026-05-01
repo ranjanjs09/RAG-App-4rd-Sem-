@@ -1,7 +1,9 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenerativeAI } from "@google/generative-ai";
+import { db } from "./firebase";
+import { collection, query as firestoreQuery, where, getDocs, addDoc, serverTimestamp, orderBy, limit } from "firebase/firestore";
 
 // Initialize Gemini lazily to ensure API key is available
-let genAI: GoogleGenAI | null = null;
+let genAI: GoogleGenerativeAI | null = null;
 
 function getAI() {
   if (!genAI) {
@@ -9,7 +11,7 @@ function getAI() {
     if (!apiKey) {
       throw new Error("GEMINI_API_KEY is not defined in the environment.");
     }
-    genAI = new GoogleGenAI({ apiKey });
+    genAI = new GoogleGenerativeAI(apiKey);
   }
   return genAI;
 }
@@ -19,6 +21,8 @@ export interface Document {
   title: string;
   content: string;
   embedding?: number[];
+  userId?: string;
+  type?: "text" | "image";
   score?: number;
 }
 
@@ -60,35 +64,70 @@ function calculateF1(prediction: string, context: string) {
   return (2 * precision * recall) / (precision + recall);
 }
 
+// Helper: Get Embedding
+export async function getEmbedding(text: string) {
+  const ai = getAI();
+  const model = ai.getGenerativeModel({ model: "text-embedding-004" });
+  const resp = await model.embedContent(text);
+  return resp.embedding.values;
+}
+
+// Database Helpers
+export async function saveKnowledge(data: { title: string; content: string; type: "text" | "image"; userId: string; metadata?: any }) {
+  const embedding = await getEmbedding(data.content);
+  const docRef = await addDoc(collection(db, "knowledge"), {
+    ...data,
+    embedding,
+    createdAt: serverTimestamp()
+  });
+  return docRef.id;
+}
+
+export async function processImageKnowledge(file: File, userId: string) {
+  const ai = getAI();
+  const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
+  
+  const base64 = await new Promise<string>((resolve) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve((reader.result as string).split(',')[1]);
+    reader.readAsDataURL(file);
+  });
+
+  const result = await model.generateContent([
+    {
+      inlineData: {
+        data: base64,
+        mimeType: file.type
+      }
+    },
+    "Extract all factual information from this image. Summarize it into a rich text passage that can be used for RAG retrieval. Focus on data, dates, names, and key insights."
+  ]);
+
+  const content = result.response.text();
+  return await saveKnowledge({
+    title: `Image Extraction: ${file.name}`,
+    content,
+    type: "image",
+    userId,
+    metadata: { fileName: file.name, fileSize: file.size }
+  });
+}
+
 export async function processRAGQuery(
-  query: string, 
-  dataset: Document[], 
+  queryText: string, 
+  userId: string,
   k: number = 3, 
-  modelName: string = "gemini-3-flash-preview"
+  modelName: string = "gemini-1.5-flash"
 ): Promise<RAGResponse> {
   const ai = getAI();
 
-  // 1. Retrieval
-  // Ensure we have embeddings for the dataset
-  for (const doc of dataset) {
-    if (!doc.embedding) {
-      try {
-        const resp = await ai.models.embedContent({
-          model: "gemini-embedding-2-preview",
-          contents: [{ parts: [{ text: doc.content }] }]
-        });
-        doc.embedding = resp.embeddings[0].values;
-      } catch (e) {
-        console.error(`Failed to embed doc ${doc.id}:`, e);
-      }
-    }
-  }
+  // 1. Fetch relevant docs from Firestore
+  const q = firestoreQuery(collection(db, "knowledge"), where("userId", "==", userId), orderBy("createdAt", "desc"), limit(100));
+  const snapshot = await getDocs(q);
+  const dataset: Document[] = snapshot.docs.map(d => ({ id: d.id, ...d.data() } as Document));
 
-  const queryEmbeddingResponse = await ai.models.embedContent({
-    model: "gemini-embedding-2-preview",
-    contents: [{ parts: [{ text: query }] }]
-  });
-  const queryEmbedding = queryEmbeddingResponse.embeddings[0].values;
+  // 1b. Vector search (Client-side)
+  const queryEmbedding = await getEmbedding(queryText);
 
   const scoredDocs = dataset
     .map(doc => ({
@@ -101,35 +140,32 @@ export async function processRAGQuery(
   const contextText = scoredDocs.map(d => `[Source: ${d.id}] ${d.content}`).join("\n\n");
 
   // 2. Generation
-  const generationResponse = await ai.models.generateContent({
+  const genModel = ai.getGenerativeModel({ 
     model: modelName,
-    contents: `Context:\n${contextText}\n\nQuery: ${query}`,
-    config: {
-      systemInstruction: `You are a faithful assistant. Answer the user query strictly using the provided context. 
+    systemInstruction: `You are a faithful assistant. Answer the user query strictly using the provided context. 
       If the answer is not in the context, say you don't know and do not use your external knowledge.
       Provide citations in the format [docId] after each claim. Keep the answer concise.`,
-    }
   });
 
-  const answer = generationResponse.text || "No response generated.";
+  const generationResponse = await genModel.generateContent(`Context:\n${contextText}\n\nQuery: ${queryText}`);
+  const answer = generationResponse.response.text();
 
   // 3. Faithfulness Verification
-  const verificationResponse = await ai.models.generateContent({
-    model: "gemini-3.1-pro-preview",
-    contents: `Context:\n${contextText}\n\nAnswer: ${answer}`,
-    config: {
-      systemInstruction: `Analyze the faithfulness of the answer based on the provided context.
+  const verifyModel = ai.getGenerativeModel({ 
+    model: "gemini-1.5-pro",
+    systemInstruction: `Analyze the faithfulness of the answer based on the provided context.
       An answer is faithful if every claim made in it is directly supported by the context.
       Calculate a faithfulness score from 0.0 to 1.0. 0.0 means completely hallucinated, 1.0 means perfectly grounded.
       Identify specific spans in the answer and link them to document IDs.
       Return ONLY JSON: { "score": 0.95, "alignment": [{ "text": "...", "docId": "..." }] }`,
-      responseMimeType: "application/json"
-    }
+    generationConfig: { responseMimeType: "application/json" }
   });
+
+  const verificationResponse = await verifyModel.generateContent(`Context:\n${contextText}\n\nAnswer: ${answer}`);
 
   let verificationData;
   try {
-    const text = verificationResponse.text;
+    const text = verificationResponse.response.text();
     verificationData = text ? JSON.parse(text) : { score: 0, alignment: [] };
   } catch (e) {
     verificationData = { score: 0, alignment: [] };
